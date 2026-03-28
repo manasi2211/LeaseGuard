@@ -1,25 +1,30 @@
 """
-LeaseGuard Voice Agent — Lisa, your friendly neighbourhood guide
-Uses Vertex AI with Google Cloud credits.
+LeaseGuard API Server — Connects the web frontend to Gemini + NYC Open Data
 
 SETUP:
-  gcloud auth application-default login
-  gcloud config set project leasegaurd-491606
-  pip3 install SpeechRecognition google-genai requests pyaudio
+  pip3 install flask flask-cors google-genai requests
 
 USAGE:
-  python3 leaseguard_voice.py
+  python3 leaseguard_api.py
+
+Then open index.html in your browser.
 """
 
-import os
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 import json
 import requests
-import speech_recognition as sr
 from google import genai
 from google.genai import types
 
 # ============================================================
-# CONFIG — Uses Vertex AI with your Google Cloud credits
+# FLASK APP
+# ============================================================
+app = Flask(__name__)
+CORS(app)  # Allow frontend to call this
+
+# ============================================================
+# GEMINI CONFIG — Vertex AI with your credits
 # ============================================================
 client = genai.Client(
     vertexai=True,
@@ -27,6 +32,9 @@ client = genai.Client(
     location="us-central1",
 )
 MODEL = "gemini-2.5-flash"
+
+# Store chat sessions per user
+chat_sessions = {}
 
 # ============================================================
 # NYC OPEN DATA FUNCTIONS
@@ -65,6 +73,13 @@ def lookup_hpd_violations(house_number: str, street_name: str, borough: str) -> 
         return json.dumps({"message": f"No HPD violations found for {house} {street_upper}, {borough}.", "count": 0})
 
     open_violations = [v for v in data if v.get("currentstatus", "").upper() != "CLOSE"]
+    closed_violations = [v for v in data if v.get("currentstatus", "").upper() == "CLOSE"]
+
+    categories = {}
+    for v in open_violations:
+        cat = v.get("novdescription", "Other")[:80]
+        categories[cat] = categories.get(cat, 0) + 1
+
     class_counts = {}
     for v in open_violations:
         c = v.get("class", "Unknown")
@@ -74,7 +89,18 @@ def lookup_hpd_violations(house_number: str, street_name: str, borough: str) -> 
         "address": f"{house} {street_upper}, {borough}",
         "total_violations_found": len(data),
         "open_violations": len(open_violations),
+        "closed_violations": len(closed_violations),
         "violation_classes": class_counts,
+        "top_violation_types": dict(sorted(categories.items(), key=lambda x: -x[1])[:10]),
+        "sample_violations": [
+            {
+                "date": v.get("inspectiondate", "N/A")[:10],
+                "class": v.get("class", "N/A"),
+                "description": v.get("novdescription", "N/A")[:120],
+                "status": v.get("currentstatus", "N/A")
+            }
+            for v in open_violations[:5]
+        ]
     }, indent=2)
 
 
@@ -115,7 +141,16 @@ def lookup_311_complaints(house_number: str, street_name: str, borough: str) -> 
     return json.dumps({
         "address": f"{house} {street_upper}, {borough}",
         "total_complaints": len(data),
-        "complaint_types": dict(sorted(complaint_types.items(), key=lambda x: -x[1])[:5]),
+        "complaint_types": dict(sorted(complaint_types.items(), key=lambda x: -x[1])[:10]),
+        "recent_complaints": [
+            {
+                "date": c.get("created_date", "N/A")[:10],
+                "type": c.get("complaint_type", "N/A"),
+                "descriptor": c.get("descriptor", "N/A"),
+                "status": c.get("status", "N/A")
+            }
+            for c in data[:5]
+        ]
     }, indent=2)
 
 
@@ -154,8 +189,11 @@ def lookup_building_registration(house_number: str, street_name: str, borough: s
     reg = data[0]
     return json.dumps({
         "address": f"{house} {street_upper}, {borough}",
+        "registration_id": reg.get("registrationid", "N/A"),
+        "building_id": reg.get("buildingid", "N/A"),
         "owner_name": reg.get("ownername", "N/A"),
         "owner_business_name": reg.get("corpname", "N/A"),
+        "registration_end_date": reg.get("registrationenddate", "N/A")[:10] if reg.get("registrationenddate") else "N/A",
         "total_units": reg.get("totalunits", "N/A"),
     }, indent=2)
 
@@ -170,13 +208,11 @@ PERSONALITY:
 - Friendly, warm, and approachable — like a helpful neighbor.
 - You're on the tenant's side.
 - Use plain language. Explain any jargon.
-- Keep responses SHORT for voice — max 4-5 sentences total.
 - Be conversational, like talking to a knowledgeable friend.
 
 LANGUAGE RULES:
 - Detect the user's language and respond in the SAME language.
-- If the user switches language mid-conversation, switch immediately.
-- You support: English, Hindi, and Spanish.
+- Support: English, Hindi, and Spanish.
 
 CONVERSATION FLOW:
 - Always end by asking: "Would you like to know anything else, or check a different address?"
@@ -201,85 +237,69 @@ WHAT YOU DON'T DO:
 - Recommend calling 311 or a tenant attorney for legal questions.
 """
 
-# ============================================================
-# VOICE FUNCTIONS
-# ============================================================
+SYSTEM_PROMPT_VOICE = SYSTEM_PROMPT + """
 
-def speak(text):
-    """Convert text to speech using Mac's built-in say command."""
-    print(f"\n  🏠 Lisa: {text}\n")
-    # Escape quotes and special characters for shell
-    safe_text = text.replace('"', '\\"').replace("'", "\\'").replace("\n", " ")
-    os.system(f'say "{safe_text}"')
-
-
-def listen():
-    """Listen for voice input and return text."""
-    recognizer = sr.Recognizer()
-    with sr.Microphone() as source:
-        print("  🎤 Listening... (speak now)")
-        recognizer.adjust_for_ambient_noise(source, duration=1)
-        try:
-            audio = recognizer.listen(source, timeout=15, phrase_time_limit=20)
-            print("  ⏳ Processing speech...")
-            text = recognizer.recognize_google(audio)
-            print(f"  🎤 You said: {text}")
-            return text
-        except sr.WaitTimeoutError:
-            return None
-        except sr.UnknownValueError:
-            return None
-        except sr.RequestError as e:
-            print(f"  ❌ Speech recognition error: {e}")
-            return None
-
+VOICE MODE RULES:
+- Keep responses SHORT — max 4-5 sentences total.
+- No bullet points or lists — speak naturally.
+- No special characters or markdown formatting.
+"""
 
 # ============================================================
-# MAIN
+# ROUTES
 # ============================================================
 
-def main():
-    print("=" * 60)
-    print("  🏠 LeaseGuard — Meet Lisa!")
-    print("  🎤 Speak in English, Hindi, or Spanish!")
-    print("  Say 'quit' or 'exit' to stop")
-    print("=" * 60)
-    print()
+@app.route("/health", methods=["GET"])
+def health():
+    """Health check endpoint for frontend."""
+    return jsonify({"status": "ok", "agent": "Lisa", "app": "LeaseGuard"})
 
-    chat = client.chats.create(
-        model=MODEL,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            tools=[
-                lookup_hpd_violations,
-                lookup_311_complaints,
-                lookup_building_registration,
-            ],
-            temperature=0.7,
-        ),
-    )
 
-    speak("Hi! I'm Lisa, your friendly neighbourhood guide for NYC renters. I can look up building safety records in English, Hindi, or Spanish. Just tell me an address and I'll check it for you!")
+@app.route("/chat", methods=["POST"])
+def chat():
+    """Main chat endpoint. Creates or reuses a session per session_id."""
+    data = request.get_json()
+    message = data.get("message", "").strip()
+    session_id = data.get("session_id", "default")
+    is_voice = data.get("is_voice", False)
 
-    while True:
-        user_input = listen()
+    if not message:
+        return jsonify({"error": "No message provided"}), 400
 
-        if user_input is None:
-            speak("I didn't catch that. Could you repeat the address?")
-            continue
+    # Get or create chat session
+    if session_id not in chat_sessions:
+        prompt = SYSTEM_PROMPT_VOICE if is_voice else SYSTEM_PROMPT
+        chat_sessions[session_id] = client.chats.create(
+            model=MODEL,
+            config=types.GenerateContentConfig(
+                system_instruction=prompt,
+                tools=[
+                    lookup_hpd_violations,
+                    lookup_311_complaints,
+                    lookup_building_registration,
+                ],
+                temperature=0.7,
+            ),
+        )
 
-        if user_input.lower() in ("quit", "exit", "stop", "bye"):
-            speak("Stay safe out there! Goodbye!")
-            break
+    try:
+        session = chat_sessions[session_id]
+        response = session.send_message(message)
+        return jsonify({"reply": response.text})
+    except Exception as e:
+        # If session is broken, remove it so next request creates fresh one
+        chat_sessions.pop(session_id, None)
+        return jsonify({"error": str(e)}), 500
 
-        try:
-            print("  ⏳ Lisa is looking up the data...")
-            response = chat.send_message(user_input)
-            speak(response.text)
-        except Exception as e:
-            print(f"  ❌ Error: {e}")
-            speak("Sorry, I had trouble looking that up. Could you try again?")
 
+# ============================================================
+# RUN
+# ============================================================
 
 if __name__ == "__main__":
-    main()
+    print("=" * 60)
+    print("  🏠 LeaseGuard API Server")
+    print("  Backend running at http://localhost:8080")
+    print("  Open index.html in your browser!")
+    print("=" * 60)
+    app.run(host="0.0.0.0", port=8080, debug=True)

@@ -1,25 +1,32 @@
 """
-LeaseGuard Voice Agent — Lisa, your friendly neighbourhood guide
-Uses Vertex AI with Google Cloud credits.
+LeaseGuard API — Backend for the web UI
+Your teammate's frontend calls this API with an address,
+and it returns Lisa's building report.
 
 SETUP:
-  gcloud auth application-default login
-  gcloud config set project leasegaurd-491606
-  pip3 install SpeechRecognition google-genai requests pyaudio
+  pip3 install flask flask-cors google-genai requests
 
 USAGE:
-  python3 leaseguard_voice.py
+  python3 app.py
+
+API ENDPOINT:
+  POST http://localhost:5000/api/check-building
+  Body: {"address": "725 4th Avenue Brooklyn"}
+  Returns: {"response": "Lisa's building report..."}
 """
 
-import os
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 import json
 import requests
-import speech_recognition as sr
 from google import genai
 from google.genai import types
 
+app = Flask(__name__)
+CORS(app)  # Allows your teammate's frontend to call this API
+
 # ============================================================
-# CONFIG — Uses Vertex AI with your Google Cloud credits
+# CONFIG — Vertex AI
 # ============================================================
 client = genai.Client(
     vertexai=True,
@@ -170,16 +177,11 @@ PERSONALITY:
 - Friendly, warm, and approachable — like a helpful neighbor.
 - You're on the tenant's side.
 - Use plain language. Explain any jargon.
-- Keep responses SHORT for voice — max 4-5 sentences total.
-- Be conversational, like talking to a knowledgeable friend.
+- Keep responses concise — max 4-5 sentences total.
 
 LANGUAGE RULES:
 - Detect the user's language and respond in the SAME language.
-- If the user switches language mid-conversation, switch immediately.
-- You support: English, Hindi, and Spanish.
-
-CONVERSATION FLOW:
-- Always end by asking: "Would you like to know anything else, or check a different address?"
+- Support: English, Hindi, and Spanish.
 
 CRITICAL — ADDRESS FORMATTING FOR TOOL CALLS:
 When calling any lookup tool, format the address for NYC Open Data:
@@ -202,84 +204,86 @@ WHAT YOU DON'T DO:
 """
 
 # ============================================================
-# VOICE FUNCTIONS
+# API ENDPOINTS
 # ============================================================
 
-def speak(text):
-    """Convert text to speech using Mac's built-in say command."""
-    print(f"\n  🏠 Lisa: {text}\n")
-    # Escape quotes and special characters for shell
-    safe_text = text.replace('"', '\\"').replace("'", "\\'").replace("\n", " ")
-    os.system(f'say "{safe_text}"')
+# Store chat sessions per user (simple in-memory for hackathon)
+chat_sessions = {}
+
+def get_chat(session_id="default"):
+    """Get or create a chat session."""
+    if session_id not in chat_sessions:
+        chat_sessions[session_id] = client.chats.create(
+            model=MODEL,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                tools=[
+                    lookup_hpd_violations,
+                    lookup_311_complaints,
+                    lookup_building_registration,
+                ],
+                temperature=0.7,
+            ),
+        )
+    return chat_sessions[session_id]
 
 
-def listen():
-    """Listen for voice input and return text."""
-    recognizer = sr.Recognizer()
-    with sr.Microphone() as source:
-        print("  🎤 Listening... (speak now)")
-        recognizer.adjust_for_ambient_noise(source, duration=1)
-        try:
-            audio = recognizer.listen(source, timeout=15, phrase_time_limit=20)
-            print("  ⏳ Processing speech...")
-            text = recognizer.recognize_google(audio)
-            print(f"  🎤 You said: {text}")
-            return text
-        except sr.WaitTimeoutError:
-            return None
-        except sr.UnknownValueError:
-            return None
-        except sr.RequestError as e:
-            print(f"  ❌ Speech recognition error: {e}")
-            return None
+@app.route("/api/check-building", methods=["POST"])
+def check_building():
+    """Main endpoint — send an address, get Lisa's report back."""
+    data = request.json
+    address = data.get("address", "")
+    session_id = data.get("session_id", "default")
+
+    if not address:
+        return jsonify({"error": "No address provided"}), 400
+
+    try:
+        chat = get_chat(session_id)
+        response = chat.send_message(address)
+        return jsonify({
+            "response": response.text,
+            "address": address,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
-# ============================================================
-# MAIN
-# ============================================================
+@app.route("/api/chat", methods=["POST"])
+def chat_message():
+    """General chat endpoint — for follow-up questions."""
+    data = request.json
+    message = data.get("message", "")
+    session_id = data.get("session_id", "default")
 
-def main():
-    print("=" * 60)
-    print("  🏠 LeaseGuard — Meet Lisa!")
-    print("  🎤 Speak in English, Hindi, or Spanish!")
-    print("  Say 'quit' or 'exit' to stop")
-    print("=" * 60)
-    print()
+    if not message:
+        return jsonify({"error": "No message provided"}), 400
 
-    chat = client.chats.create(
-        model=MODEL,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            tools=[
-                lookup_hpd_violations,
-                lookup_311_complaints,
-                lookup_building_registration,
-            ],
-            temperature=0.7,
-        ),
-    )
+    try:
+        chat = get_chat(session_id)
+        response = chat.send_message(message)
+        return jsonify({
+            "response": response.text,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-    speak("Hi! I'm Lisa, your friendly neighbourhood guide for NYC renters. I can look up building safety records in English, Hindi, or Spanish. Just tell me an address and I'll check it for you!")
 
-    while True:
-        user_input = listen()
-
-        if user_input is None:
-            speak("I didn't catch that. Could you repeat the address?")
-            continue
-
-        if user_input.lower() in ("quit", "exit", "stop", "bye"):
-            speak("Stay safe out there! Goodbye!")
-            break
-
-        try:
-            print("  ⏳ Lisa is looking up the data...")
-            response = chat.send_message(user_input)
-            speak(response.text)
-        except Exception as e:
-            print(f"  ❌ Error: {e}")
-            speak("Sorry, I had trouble looking that up. Could you try again?")
+@app.route("/")
+def home():
+    return jsonify({
+        "name": "LeaseGuard API — Lisa",
+        "endpoints": {
+            "POST /api/check-building": "Send {address: '725 4th Ave Brooklyn'} to get a building report",
+            "POST /api/chat": "Send {message: 'who owns this building?'} for follow-up questions",
+        }
+    })
 
 
 if __name__ == "__main__":
-    main()
+    print("=" * 60)
+    print("  🏠 LeaseGuard API — Lisa is ready!")
+    print("  📡 Running at http://localhost:8080")
+    print("  Press Ctrl+C to stop")
+    print("=" * 60)
+    app.run(host="0.0.0.0", port=8080, debug=True)
