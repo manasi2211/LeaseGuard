@@ -112,6 +112,65 @@ LeaseGuard aggregates data from NYC public records including:
 
 ---
 
+## 🚀 Setup & Run
+### Prerequisites
+- Python 3.10+
+- Mac (for voice agent's `say` command) or any OS (for web version)
+- Google Cloud account with Vertex AI enabled
+### Step 1: Clone the repo
+```bash
+git clone https://github.com/YOUR_REPO_HERE/LeaseGuard.git
+cd LeaseGuard
+```
+### Step 2: Install dependencies
+```bash
+# Mac only — needed for voice agent microphone
+brew install portaudio
+
+# Python packages
+pip3 install -r requirements.txt
+```
+### Step 3: Authenticate with Google Cloud
+```bash
+gcloud auth application-default login
+gcloud config set project leasegaurd-491606
+gcloud auth application-default set-quota-project leasegaurd-491606
+```
+### Step 4: Enable APIs (one time)
+- Enable **Vertex AI API**: https://console.cloud.google.com/apis/api/aiplatform.googleapis.com
+- Enable **Generative Language API**: https://console.cloud.google.com/apis/api/generativelanguage.googleapis.com
+### Step 5: Run
+**Option A — Web App (recommended for demo):**
+```bash
+python3 leaseguard_api.py
+```
+Then open http://localhost:5000 in your browser.
+**Option B — Voice Agent (terminal):**
+```bash
+python3 leaseguard_voice.py
+```
+Say "Hello" and then ask about any NYC building address.
+**Option C — Text Agent (terminal):**
+```bash
+python3 leaseguard_agent.py
+```
+Type any NYC building address to get a safety report.
+---
+## 🎤 Demo Script
+1. Open http://localhost:5000
+2. Type: **"Tell me about 725 4th Avenue in Brooklyn"** → see violations, complaints, risk assessment
+3. Switch to Voice mode → say: **"Who owns this building?"**
+4. Ask in Hindi: **"क्या यह बिल्डिंग सुरक्षित है?"**
+5. Ask in Spanish: **"¿Hay quejas de cucarachas?"**
+---
+## 🛠️ Tech Stack
+- **Gemini 2.5 Flash** via Vertex AI — language understanding + function calling
+- **Google Cloud** — authentication and credits
+- **NYC Open Data APIs** — live building data (HPD, 311, registrations)
+- **Flask** — Python web server
+- **Web Speech API** — browser-based voice recognition
+- **Google Speech Recognition** — terminal voice input
+
 <p align="center">
   <strong>Built with ❤️ at GDG Build With AI Hackathon NYC 2026</strong>
 </p>
