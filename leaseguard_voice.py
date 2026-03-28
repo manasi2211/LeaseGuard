@@ -1,9 +1,8 @@
 """
-LeaseGuard Voice Agent — Vertex AI Version
-Uses your Google Cloud $25 credits.
+LeaseGuard Voice Agent — Lisa, your friendly neighbourhood guide
+Uses Vertex AI with Google Cloud credits.
 
-SETUP (one time):
-  brew install google-cloud-sdk
+SETUP:
   gcloud auth application-default login
   gcloud config set project leasegaurd-491606
   pip3 install SpeechRecognition pyttsx3 google-genai requests
@@ -21,7 +20,6 @@ from google.genai import types
 
 # ============================================================
 # CONFIG — Uses Vertex AI with your Google Cloud credits
-# No API key needed! Uses gcloud login automatically.
 # ============================================================
 client = genai.Client(
     vertexai=True,
@@ -172,17 +170,19 @@ def lookup_building_registration(house_number: str, street_name: str, borough: s
 # SYSTEM PROMPT
 # ============================================================
 
-SYSTEM_PROMPT = """You are LeaseGuard, an AI tenant protection agent for New York City renters.
+SYSTEM_PROMPT = """You are Lisa, a friendly neighbourhood guide and tenant protection agent for New York City renters. Your app is called LeaseGuard.
 
 PERSONALITY:
-- Warm but direct. You're on the tenant's side.
+- Friendly, warm, and approachable — like a helpful neighbor.
+- You're on the tenant's side.
 - Use plain language. Explain any jargon.
 - Keep responses SHORT for voice — max 4-5 sentences total.
 - Be conversational, like talking to a knowledgeable friend.
 
 LANGUAGE RULES:
 - Detect the user's language and respond in the SAME language.
-- Support: English, Hindi, and Spanish.
+- If the user switches language mid-conversation, switch immediately.
+- You support: English, Hindi, and Spanish.
 
 CONVERSATION FLOW:
 - Always end by asking: "Would you like to know anything else, or check a different address?"
@@ -213,7 +213,7 @@ WHAT YOU DON'T DO:
 
 def speak(text):
     """Convert text to speech."""
-    print(f"\n  🏠 LeaseGuard: {text}\n")
+    print(f"\n  🏠 Lisa: {text}\n")
     engine.say(text)
     engine.runAndWait()
 
@@ -223,9 +223,9 @@ def listen():
     recognizer = sr.Recognizer()
     with sr.Microphone() as source:
         print("  🎤 Listening... (speak now)")
-        recognizer.adjust_for_ambient_noise(source, duration=0.5)
+        recognizer.adjust_for_ambient_noise(source, duration=1)
         try:
-            audio = recognizer.listen(source, timeout=10, phrase_time_limit=15)
+            audio = recognizer.listen(source, timeout=15, phrase_time_limit=20)
             print("  ⏳ Processing speech...")
             text = recognizer.recognize_google(audio)
             print(f"  🎤 You said: {text}")
@@ -245,7 +245,7 @@ def listen():
 
 def main():
     print("=" * 60)
-    print("  🏠 LeaseGuard Voice Agent")
+    print("  🏠 LeaseGuard — Meet Lisa!")
     print("  🎤 Speak in English, Hindi, or Spanish!")
     print("  Say 'quit' or 'exit' to stop")
     print("=" * 60)
@@ -264,7 +264,7 @@ def main():
         ),
     )
 
-    speak("Hi! I'm LeaseGuard, your NYC tenant protection agent. I can look up building safety records in English, Hindi, or Spanish. What address would you like to check?")
+    speak("Hi! I'm Lisa, your friendly neighbourhood guide for NYC renters. I can look up building safety records in English, Hindi, or Spanish. Just tell me an address and I'll check it for you!")
 
     while True:
         user_input = listen()
@@ -278,7 +278,7 @@ def main():
             break
 
         try:
-            print("  ⏳ LeaseGuard is looking up the data...")
+            print("  ⏳ Lisa is looking up the data...")
             response = chat.send_message(user_input)
             speak(response.text)
         except Exception as e:
