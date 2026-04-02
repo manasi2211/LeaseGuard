@@ -8,9 +8,9 @@
 
 ## 👥 Team
 
-- [Pratap Gurav](https://www.linkedin.com/in/pratapgurav/)
 - [Manasi Shah](https://www.linkedin.com/in/shah-manasi/)
 - [Rohit Shegokar](https://www.linkedin.com/in/rohit-shegokar/)
+- [Pratap Gurav](https://www.linkedin.com/in/pratapgurav/)
 - [Shagun Sharma](https://www.linkedin.com/in/shagun/)
 
 ---
